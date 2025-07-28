@@ -1,123 +1,144 @@
 import org.json.JSONObject;
 import java.io.FileReader;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.math.BigInteger;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 import java.util.stream.Collectors;
 
 public class PolynomialSolver {
+    static final int PRIME = 2089;
 
-    // Helper class to represent a point (x, y)
-    static class Point {
-        int x;
-        BigInteger y;
+    static int baseToInt(String str, int base) {
+        int value = 0;
+        for (char c : str.toCharArray()) {
+            int digit;
+            if (Character.isDigit(c)) digit = c - '0';
+            else if (Character.isLetter(c)) digit = Character.toLowerCase(c) - 'a' + 10;
+            else throw new IllegalArgumentException("Invalid digit in base string");
 
-        public Point(int x, BigInteger y) {
-            this.x = x;
-            this.y = y;
+            if (digit >= base) throw new IllegalArgumentException("Digit exceeds base");
+
+            value = (value * base + digit) % PRIME;
         }
+        return value;
     }
 
-    /**
-     * Solves for the constant term 'c' of a polynomial using Lagrange Interpolation.
-     * The constant term 'c' is f(0).
-     *
-     * @param points The list of (x, y) points.
-     * @param k The minimum number of points required (degree + 1).
-     * @return The constant term 'c' as a BigInteger.
-     */
-    public static BigInteger findConstantTerm(List<Point> points, int k) {
-        BigInteger constantTerm = BigInteger.ZERO;
+    static int modInverse(int a) {
+        int res = 1, b = PRIME - 2;
+        a %= PRIME;
+        while (b > 0) {
+            if ((b & 1) != 0) res = (res * a) % PRIME;
+            a = (a * a) % PRIME;
+            b >>= 1;
+        }
+        return res;
+    }
 
-        // Use only the first k points for interpolation.
-        // The problem states n >= k, so we can always pick k points.
-        List<Point> kPoints = points.stream().limit(k).collect(Collectors.toList());
+    static int interpolateAtZero(List<int[]> shares) {
+        int secret = 0;
+        int k = shares.size();
 
-        for (int j = 0; j < k; j++) {
-            Point currentPoint = kPoints.get(j);
-            BigInteger y_j = currentPoint.y;
-            int x_j = currentPoint.x;
+        for (int i = 0; i < k; i++) {
+            int xi = shares.get(i)[0];
+            int yi = shares.get(i)[1];
+            int num = 1, den = 1;
 
-            BigInteger numerator = BigInteger.ONE;
-            BigInteger denominator = BigInteger.ONE;
-
-            for (int i = 0; i < k; i++) {
-                if (i == j) {
-                    continue;
-                }
-                Point otherPoint = kPoints.get(i);
-                int x_i = otherPoint.x;
-
-                // Numerator: Product of (0 - x_i) for i!= j
-                numerator = numerator.multiply(BigInteger.valueOf(0 - x_i));
-
-                // Denominator: Product of (x_j - x_i) for i!= j
-                denominator = denominator.multiply(BigInteger.valueOf(x_j - x_i));
+            for (int j = 0; j < k; j++) {
+                if (i == j) continue;
+                int xj = shares.get(j)[0];
+                num = (num * ((-xj + PRIME) % PRIME)) % PRIME;
+                den = (den * ((xi - xj + PRIME) % PRIME)) % PRIME;
             }
 
-            // Calculate the term for this point: y_j * (numerator / denominator)
-            // Given the problem constraints (positive integer coefficients),
-            // the division is expected to be exact.
-            BigInteger term = y_j.multiply(numerator).divide(denominator);
-            constantTerm = constantTerm.add(term);
+            int term = (((yi * num) % PRIME) * modInverse(den)) % PRIME;
+            secret = (secret + term) % PRIME;
         }
-
-        return constantTerm;
+        return secret;
     }
 
-    /**
-     * Processes a single test case from a JSON file.
-     *
-     * @param jsonFilePath The path to the JSON file.
-     * @return The calculated secret (constant term 'c').
-     * @throws Exception if there's an issue reading the file or parsing JSON.
-     */
-    public static BigInteger processTestCase(String jsonFilePath) throws Exception {
-        JSONObject jsonObject = new JSONObject(new FileReader(jsonFilePath));
+    static int evaluateAtX(List<int[]> shares, int x) {
+        int result = 0;
+        int k = shares.size();
 
-        JSONObject keys = jsonObject.getJSONObject("keys");
-        // int n = keys.getInt("n"); // n is the total number of roots provided, not directly used in calculation
-        int k = keys.getInt("k"); // k is the minimum number of roots required (degree + 1)
+        for (int i = 0; i < k; i++) {
+            int xi = shares.get(i)[0];
+            int yi = shares.get(i)[1];
+            int num = 1, den = 1;
 
-        List<Point> points = new ArrayList<>();
-
-        // Iterate through the keys (which are x-values) in the JSON object
-        // Skip the "keys" object as it contains metadata, not points
-        for (String key : jsonObject.keySet()) {
-            if (!key.equals("keys")) {
-                int x = Integer.parseInt(key);
-                JSONObject yData = jsonObject.getJSONObject(key);
-                String baseStr = yData.getString("base");
-                String valueStr = yData.getString("value");
-
-                int base = Integer.parseInt(baseStr);
-                // Decode Y value from its given base to a BigInteger
-                BigInteger y = new BigInteger(valueStr, base); 
-
-                points.add(new Point(x, y));
+            for (int j = 0; j < k; j++) {
+                if (i == j) continue;
+                int xj = shares.get(j)[0];
+                num = (num * ((x - xj + PRIME) % PRIME)) % PRIME;
+                den = (den * ((xi - xj + PRIME) % PRIME)) % PRIME;
             }
+
+            int term = (((yi * num) % PRIME) * modInverse(den)) % PRIME;
+            result = (result + term) % PRIME;
         }
-
-        // Sort points by x-value. While Lagrange interpolation doesn't strictly require sorted points,
-        // sorting ensures a consistent selection of the "first k" points if n > k.
-        points.sort((p1, p2) -> Integer.compare(p1.x, p2.x));
-
-        return findConstantTerm(points, k);
+        return result;
     }
 
-    public static void main(String args) {
-        // Create dummy JSON files for demonstration purposes.
-        // In a real submission, these files would be provided externally.
-        createDummyJsonFiles();
-
+    public static void main(String[] args) {
         try {
-            BigInteger secret1 = processTestCase("testcase1.json");
-            System.out.println("Secret for Test Case 1: " + secret1);
+            JSONObject json = new JSONObject(new FileReader("input.json"));
+            int k = json.getJSONObject("keys").getInt("k");
 
-            BigInteger secret2 = processTestCase("testcase2.json");
-            System.out.println("Secret for Test Case 2: " + secret2);
+            List<int[]> allShares = new ArrayList<>();
+
+            for (String key : json.keySet()) {
+                if (key.equals("keys")) continue;
+
+                int x = Integer.parseInt(key);
+                JSONObject yObj = json.getJSONObject(key);
+                int base = Integer.parseInt(yObj.getString("base"));
+                String valueStr = yObj.getString("value");
+
+                try {
+                    int y = baseToInt(valueStr, base);
+                    allShares.add(new int[]{x, y});
+                } catch (Exception e) {
+                    System.out.println("Invalid secret: failed to parse or convert one of the keys");
+                    return;
+                }
+            }
+
+            if (allShares.size() < k) {
+                System.out.println("Not enough shares to reconstruct the secret");
+                return;
+            }
+
+            List<Integer> indices = new ArrayList<>();
+            for (int i = 0; i < allShares.size(); i++) indices.add(i);
+
+            int finalSecret = -1;
+            boolean found = false;
+
+            outerLoop:
+            for (List<Integer> comb : combinations(indices, k)) {
+                List<int[]> selected = comb.stream().map(allShares::get).collect(Collectors.toList());
+                int candidateSecret = interpolateAtZero(selected);
+
+                boolean valid = true;
+                for (int[] point : allShares) {
+                    int x = point[0];
+                    int actualY = point[1];
+                    int expectedY = evaluateAtX(selected, x);
+                    if (expectedY != actualY) {
+                        valid = false;
+                        break;
+                    }
+                }
+
+                if (valid) {
+                    finalSecret = candidateSecret;
+                    found = true;
+                    break outerLoop;
+                }
+            }
+
+            if (found) {
+                System.out.println("Secret key is: " + finalSecret);
+            } else {
+                System.out.println("Could not validate secret with any combination of shares");
+            }
 
         } catch (Exception e) {
             System.err.println("An error occurred: " + e.getMessage());
@@ -125,93 +146,21 @@ public class PolynomialSolver {
         }
     }
 
-    /**
-     * Helper method to create the JSON test case files.
-     * This is included to make the code runnable out-of-the-box for testing.
-     * In a production environment, these files would be pre-existing.
-     */
-    private static void createDummyJsonFiles() {
-        String testCase1Content = "{\n" +
-                "    \"keys\": {\n" +
-                "        \"n\": 4,\n" +
-                "        \"k\": 3\n" +
-                "    },\n" +
-                "    \"1\": {\n" +
-                "        \"base\": \"10\",\n" +
-                "        \"value\": \"4\"\n" +
-                "    },\n" +
-                "    \"2\": {\n" +
-                "        \"base\": \"2\",\n" +
-                "        \"value\": \"111\"\n" +
-                "    },\n" +
-                "    \"3\": {\n" +
-                "        \"base\": \"10\",\n" +
-                "        \"value\": \"12\"\n" +
-                "    },\n" +
-                "    \"6\": {\n" +
-                "        \"base\": \"4\",\n" +
-                "        \"value\": \"213\"\n" +
-                "    }\n" +
-                "}";
+    private static List<List<Integer>> combinations(List<Integer> input, int k) {
+        List<List<Integer>> result = new ArrayList<>();
+        backtrack(input, k, 0, new ArrayList<>(), result);
+        return result;
+    }
 
-        String testCase2Content = "{\n" +
-                "\"keys\": {\n" +
-                "    \"n\": 10,\n" +
-                "    \"k\": 7\n" +
-                "  },\n" +
-                "  \"1\": {\n" +
-                "    \"base\": \"6\",\n" +
-                "    \"value\": \"13444211440455345511\"\n" +
-                "  },\n" +
-                "  \"2\": {\n" +
-                "    \"base\": \"15\",\n" +
-                "    \"value\": \"aed7015a346d63\"\n" +
-                "  },\n" +
-                "  \"3\": {\n" +
-                "    \"base\": \"15\",\n" +
-                "    \"value\": \"6aeeb69631c227c\"\n" +
-                "  },\n" +
-                "  \"4\": {\n" +
-                "    \"base\": \"16\",\n" +
-                "    \"value\": \"e1b5e05623d881f\"\n" +
-                "  },\n" +
-                "  \"5\": {\n" +
-                "    \"base\": \"8\",\n" +
-                "    \"value\": \"316034514573652620673\"\n" +
-                "  },\n" +
-                "  \"6\": {\n" +
-                "    \"base\": \"3\",\n" +
-                "    \"value\": \"2122212201122002221120200210011020220200\"\n" +
-                "  },\n" +
-                "  \"7\": {\n" +
-                "    \"base\": \"3\",\n" +
-                "    \"value\": \"20120221122211000100210021102001201112121\"\n" +
-                "  },\n" +
-                "  \"8\": {\n" +
-                "    \"base\": \"6\",\n" +
-                "    \"value\": \"20220554335330240002224253\"\n" +
-                "  },\n" +
-                "  \"9\": {\n" +
-                "    \"base\": \"12\",\n" +
-                "    \"value\": \"45153788322a1255483\"\n" +
-                "  },\n" +
-                "  \"10\": {\n" +
-                "    \"base\": \"7\",\n" +
-                "    \"value\": \"1101613130313526312514143\"\n" +
-                "  }\n" +
-                "}";
-
-        try {
-            FileWriter writer1 = new FileWriter("testcase1.json");
-            writer1.write(testCase1Content);
-            writer1.close();
-
-            FileWriter writer2 = new FileWriter("testcase2.json");
-            writer2.write(testCase2Content);
-            writer2.close();
-        } catch (IOException e) {
-            System.err.println("Error creating dummy JSON files: " + e.getMessage());
-            e.printStackTrace();
+    private static void backtrack(List<Integer> input, int k, int start, List<Integer> temp, List<List<Integer>> result) {
+        if (temp.size() == k) {
+            result.add(new ArrayList<>(temp));
+            return;
+        }
+        for (int i = start; i < input.size(); i++) {
+            temp.add(input.get(i));
+            backtrack(input, k, i + 1, temp, result);
+            temp.remove(temp.size() - 1);
         }
     }
 }
